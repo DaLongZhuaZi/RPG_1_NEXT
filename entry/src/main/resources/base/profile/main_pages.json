@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/Bag",
+    "pages/Character",
+    "pages/Map",
+    "pages/Quest",
+    "pages/Magic"
+  ]
+}
