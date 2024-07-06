@@ -52,7 +52,15 @@ interface ItemData {
 @Component
 export struct GameArea {
 
+  @State enemyAndTreasureNames: Map<number, string> = new Map(); // 用于存储敌人和宝箱的名字
+  @State battleReportAboveEnemy: Map<CharacterData, string> = new Map(); // 用于存储要显示在敌人头上的战斗报告
+
   @State isPlayerMoving: boolean = false; // 玩家是否正在移动
+  @State battleReportAbovePlayer: string = ''; // 玩家头顶的战斗报告
+  @State isPlayerStopped: boolean = true; // 玩家是否停止移动
+  @State playerScaleX: number = 1; // 玩家图片的 X 轴缩放比例
+  @State actionStart: boolean = false; // 事件开始标识
+  @State actionEnd: boolean = true; // 事件结束标识
 
   @State gameAreaWidth: number = 400; // 设置游戏区域的宽度
   @State gameAreaHeight: number = 600; // 设置游戏区域的高度
@@ -115,7 +123,7 @@ export struct GameArea {
     name: '',
     level: 0,
     class: '',
-    hp: 100,
+    hp: 50,
     maxHp: 100,
     mp: 5,
     maxMp: 5,
@@ -256,8 +264,6 @@ export struct GameArea {
 
 
   @State isMoving: boolean = false; // 是否正在移动
-  private timer: number | undefined = undefined; // 定时器
-  @State private updateStateTrigger: number = 0; // 用于触发重新渲染的状态变量
 
   // 处理触摸事件
 
@@ -297,9 +303,22 @@ export struct GameArea {
     }
 
     this.isPlayerMoving = true; // 设置玩家正在移动
-    // 在移动结束后重置 isPlayerMoving
+    this.isPlayerStopped = false; // 设置玩家没有停止移动
+    // 在移动结束后重置 isPlayerMoving 和 isPlayerStopped，并调整玩家图片的朝向
+    // 在移动结束后重置 isPlayerMoving 和 isPlayerStopped，并调整玩家图片的朝向
     setTimeout(() => {
       this.isPlayerMoving = false;
+      this.isPlayerStopped = true;
+      if (this.actionEnd) { // 在事件结束后检测碰撞
+        this.checkCollisions();
+      }
+
+
+      // 如果玩家停止移动且 joystickX 小于 0，则翻转玩家图片
+      if (this.isPlayerStopped && this.joystickX < 0) {this.playerScaleX = -1;
+      } else {
+        this.playerScaleX = 1;
+      }
     }, 16); // 16 毫秒相当于 60 帧每秒
 
 
@@ -315,7 +334,6 @@ export struct GameArea {
       //this.showDialog();
       //this.dialogMessage = `角色正在向 ${direction} 移动，新位置为 (${this.characters[0].position.x}, ${this.characters[0].position.y})`;
 
-      this.updateStateTrigger++; // 更新状态变量，触发重新渲染
 
       this.updateState(); // 触发重新渲染
 
@@ -332,13 +350,22 @@ export struct GameArea {
   @State battleTarget: CharacterData | null = null; // 战斗目标
   @State currentBattleEnemy: CharacterData | null = null; // 当前战斗的敌人
 
+  // 判断玩家是否面向敌人
+  isPlayerFacingEnemy(enemy: CharacterData): boolean {
+    const playerX = this.characters[0].position.x;
+    const enemyX = enemy.position.x;
+
+    return playerX < enemyX;
+  }
+
    // 检测角色之间的碰撞
    checkCollisions() {
 
-     if (!this.isPlayerMoving) {
-       // 玩家没有移动，不检测碰撞
+     if (!this.isPlayerStopped || !this.actionEnd) {
+       // 玩家没有停止移动或事件未结束，不检测碰撞
        return;
      }
+
 
      // 遍历所有角色（包括玩家）
      for (let i = 0; i < this.characters.length; i++) {
@@ -376,7 +403,7 @@ export struct GameArea {
         } else if (character2.type === 'treasure') {
           // 玩家与宝箱发生碰撞，触发开宝箱事件
           const reward = this.generateRandomReward();
-          this.handleReward(reward);
+          this.handleReward(reward); // 直接调用 handleReward 函数
 
           // 从 characters 数组中删除宝箱
           const index = this.characters.indexOf(character2);
@@ -395,9 +422,9 @@ export struct GameArea {
 
   // 计算伤害
   calculateDamage(attacker: CharacterData, defender: CharacterData): number {
-    let damage = attacker.strength;if (attacker.mp > 0) {
+    let damage = attacker.strength;if (attacker === this.characters[0] && attacker.mp > 0) { // 只有玩家会消耗 MP
       damage += attacker.intelligence * attacker.mp;
-      attacker.mp -= Math.floor(attacker.maxMp / 5); // 消耗 1/5 的 mp
+      attacker.mp -= Math.floor(attacker.maxMp / 5); // 消耗 1/5 的 MP
     }
     return damage;
   }
@@ -415,19 +442,31 @@ export struct GameArea {
   // 开始战斗
   startBattle(enemy: CharacterData) {
 
+    // 检查玩家的 HP 是否为 0
+    if (this.characters[0].hp <= 0) {
+      this.dialogMessage = '你已经死亡，无法战斗！';
+      this.showDialog();
+      this.actionStart = false;
+      this.actionEnd = true;
+      return;
+    }
+
     if (this.currentBattleEnemy === enemy) {
       // 已经在与这个敌人战斗，不开始新的战斗
       return;
     }
 
-    this.currentBattleEnemy = enemy;
-
-    // 检查玩家人的 HP 是否为 0
-    if (this.characters[0].hp <= 0) {
-      this.dialogMessage = '你已经死亡，无法战斗！';
-      this.showDialog();
+    if (this.actionStart) {
+      // 已经在事件中，不开始新的战斗
       return;
     }
+
+    this.currentBattleEnemy = enemy;
+    // 战斗开始时重置标识符
+    this.actionStart = true;
+    this.actionEnd = false;
+
+
 
 
     // 计算伤害、防御和闪避率
@@ -435,57 +474,67 @@ export struct GameArea {
     const enemyDamage = this.calculateDamage(enemy, this.characters[0]);
     const playerDefense = this.calculateDefense(this.characters[0]);
     const enemyDefense = this.calculateDefense(enemy);
-    const playerDodgeRate = this.calculateDodgeRate(this.characters[0], enemy);const enemyDodgeRate = this.calculateDodgeRate(enemy, this.characters[0]);
+    const playerDodgeRate = this.calculateDodgeRate(this.characters[0], enemy);
+    const enemyDodgeRate = this.calculateDodgeRate(enemy, this.characters[0]);
 
     // 构建战斗报告
     let battleReport = '';
+    // 将战斗报告存储在 battleReportAbovePlayer 中
+    this.battleReportAbovePlayer = battleReport;
 
     // 玩家攻击
     if (Math.random() < enemyDodgeRate) {
-      battleReport += `你攻击了 ${enemy.name}，但被闪避了！\n`;
+      battleReport += `闪避\n`;
     } else {
       const actualPlayerDamage = Math.max(0, playerDamage - enemyDefense);
       enemy.hp -= actualPlayerDamage;
-      battleReport += `你攻击了 ${enemy.name}，造成了 ${actualPlayerDamage} 点伤害！\n`;
+      battleReport += `${enemy.name}受伤${actualPlayerDamage} 点`;
+    }
+
+    // 检查敌人是否死亡
+    if (enemy.hp <= 0) {
+      battleReport += `${enemy.name} 死亡！`;
+      this.handleEnemyDeath(enemy); // 处理敌人死亡
+      this.battleReportAbovePlayer = battleReport; // 更新战斗报告
+      this.actionStart = false;
+      this.actionEnd = true;
+      return; // 终止战斗
     }
 
     // 敌人攻击
     if (Math.random() < playerDodgeRate) {
-      battleReport += `${enemy.name} 攻击了你，但被闪避了！\n`;
+      battleReport += `闪避\n`;
     } else {
       const actualEnemyDamage = Math.max(0, enemyDamage - playerDefense);
       this.characters[0].hp -= actualEnemyDamage;
-      battleReport += `${enemy.name} 攻击了你，造成了 ${actualEnemyDamage} 点伤害！\n`;
+      battleReport += `${enemy.name}受伤${actualEnemyDamage}点`;
     }
 
-    // 检查战斗结果
-    if (enemy.hp <= 0) {
-      // 敌人死亡
-      this.handleEnemyDeath(enemy);
-    }
-
+    // 检查玩家是否死亡
     if (this.characters[0].hp <= 0) {
-      // 玩家死亡
-      this.handlePlayerDeath();
+      battleReport += `你死亡了！`;
+      this.handlePlayerDeath(); // 处理玩家死亡
+      this.battleReportAbovePlayer = battleReport; // 更新战斗报告
+      this.actionStart = false;
+      this.actionEnd = true;
+      return; // 终止战斗
     }
 
-    // 在战斗结束后重置 currentBattleEnemy
-    if (enemy.hp <= 0 || this.characters[0].hp <= 0) {
-      this.currentBattleEnemy = null;
-    }
+    // 将战斗报告存储在 battleReportAboveEnemy 中
+    this.battleReportAboveEnemy.set(enemy, battleReport); // 在每次战斗时更新战斗报告
 
-
-    // 显示战斗报告
-    this.dialogMessage = battleReport;
-    this.showDialog();
+    // 战斗结束后重置标识符
+    this.actionStart = false;
+    this.actionEnd = true;
 
     this.updateState(); // 触发重新渲染
   }
 
   // 处理敌人死亡
   handleEnemyDeath(enemy: CharacterData) {
+
     // 奖励经验值和道具
-    const expGain = 20; // 可以根据敌人等级调整
+    const expGain = 0; // 可以根据敌人等级调整
     const itemGain = this.getRandomItem();
 
     this.characters[0].exp += expGain;
@@ -496,6 +545,7 @@ export struct GameArea {
     if (index > -1) {
       this.characters.splice(index, 1);
       this.numEnemy--;
+      this.enemyAndTreasureNames.delete(index); // 从 enemyAndTreasureNames 中删除敌人的名字
     }
 
     // 检查是否升级
@@ -509,6 +559,8 @@ export struct GameArea {
     // 游戏结束
     this.dialogMessage = '你失败了！';
     this.showDialog();
+
+    //this.updateState(); // 触发重新渲染
   }
 
   // 获取随机道具
@@ -541,6 +593,7 @@ export struct GameArea {
       this.dialogMessage = '你升级了！请前往人物页面增加属性点';
       this.showDialog();
     }
+    this.updateState(); // 触发重新渲染
   }
 
   // 生成随机奖励
@@ -569,43 +622,56 @@ return {
 default:
   return { type: 'gold', amount: 0 };
 }
+
 }
 
-// 处理奖励
-handleReward(reward: RewardData) {
-  switch (reward.type) {
-    case 'gold':
-    // 将金币添加到玩家背包（或直接增加玩家的金币数量）
-      this.dialogMessage = `你获得了 ${reward.amount} 金币！`;
-      break;
-    case 'weapon':
-    // 将武器添加到玩家背包
-      this.characters[0].inventory.push({
-        name: reward.name!,
-        description: reward.description!,
-        type: 'equipment',
-        effect: (character: CharacterData) => {
-          // 实现武器的效果
-        }
-      });
-      this.dialogMessage = `你获得了 ${reward.name}！`;
-      break;
-    case 'keyItem':
-    // 将任务道具添加到玩家背包
-      this.characters[0].inventory.push({
-        name: reward.name!,
-        description: reward.description!,
-        type: 'keyItem',
-        effect: (character: CharacterData) => {
-          // 实现任务道具的效果
-        }
-      });
-      this.dialogMessage = `你获得了 ${reward.name}！`;
-      break;
+  // 处理宝箱奖励
+  handleReward(reward: RewardData) {
+    if (this.actionStart) {
+      // 已经在事件中，不处理新的奖励事件
+      return;
+    }
+
+    this.actionStart = true;
+    this.actionEnd = false;
+
+    switch (reward.type) {
+      case 'gold':
+      // 将金币添加到玩家背包（或直接增加玩家的金币数量）
+        this.dialogMessage = `你获得了 ${reward.amount} 金币！`;
+        break;
+      case 'weapon':
+      // 将武器添加到玩家背包
+        this.characters[0].inventory.push({
+          name: reward.name!,
+          description: reward.description!,
+          type: 'equipment',
+          effect: (character: CharacterData) => {
+            // 实现武器的效果
+          }
+        });
+        this.dialogMessage = `你获得了 ${reward.name}！`;
+        break;
+      case 'keyItem':
+      // 将任务道具添加到玩家背包
+        this.characters[0].inventory.push({
+          name: reward.name!,
+          description: reward.description!,
+          type: 'keyItem',
+          effect: (character: CharacterData) => {
+            // 实现任务道具的效果
+          }
+        });
+        this.dialogMessage = `你获得了 ${reward.name}！`;
+        break;
+    }
+
+    this.showDialog();
+    this.actionStart = false;
+    this.actionEnd = true;
+
+    this.updateState(); // 触发重新渲染
   }
-
-  this.showDialog();
-}
 
   // 背包弹窗
   showInventoryDialog() {
@@ -641,6 +707,7 @@ handleReward(reward: RewardData) {
       let code = (error as BusinessError).code;
       console.error(`showDialog args error code is ${code}, message is ${message}`);
     }
+
   }
   // 调试功能：显示所有角色的所有信息
   showCharacterPositions() {
@@ -712,14 +779,15 @@ handleReward(reward: RewardData) {
       .height('100%')
 
       // 角色
-      Image($r('app.media.ninja'))
+      Image($r('app.media.knight'))
         .width(50)
         .height(50)
         .position({ x: this.characters[0].position.x, y: this.characters[0].position.y })
           // 添加 key 属性，确保在状态更新时重新创建 Image 组件
-        .key(this.updateStateTrigger.toString())
+        .key(this.updateState.toString())
           // 添加条件判断，如果 joystick 在左侧，则翻转图片
-        .scale({ x: this.joystickX < 0 ? -1 : 1, y: 1 })
+        .scale({ x: this.playerScaleX, y: 1 }) // 直接修改 scale 属性
+
 
       // NPC
       ForEach(this.characters, (item: CharacterData, index: number) => {
@@ -735,11 +803,43 @@ handleReward(reward: RewardData) {
       // 敌人和宝箱
       ForEach(this.characters, (item: CharacterData, index: number) => {
         if (item.type === 'enemy' || item.type === 'treasure') {
-          Image($r(item.avatar))
-            .width(50)
-            .height(50)
-            .position({ x: item.position.x, y: item.position.y })
-            .key(index.toString())
+          Stack() {
+            Image($r(item.avatar))
+              .width(50)
+              .height(50)
+                // 移除 position 属性，直接使用 item.position.x 和 item.position.y
+              .key(index.toString())
+                // 敌人图片朝向玩家
+              .scale({
+                x: item.type === 'enemy' && this.isPlayerFacingEnemy(item) ? -1 : 1,
+                y: 1
+              })
+            // 显示敌人和宝箱的名字
+            Text(this.enemyAndTreasureNames.get(index) || '')
+              .fontSize(12)
+              .fontColor(Color.Red)
+              .position({ x: 0, y: -20 })
+            // 显示战斗报告
+            if (this.battleReportAboveEnemy.has(item)) {
+              Text(this.battleReportAboveEnemy.get(item) || '')
+                .fontSize(14)
+                .fontColor(Color.Red)
+                .backgroundColor(Color.Gray)
+                .position({
+                  x: item.position.x + 10, // 根据敌人的位置调整 x 坐标
+                  y: item.position.y - 50 // 根据敌人的位置调整 y 坐标
+                })
+            }
+          }
+          .width(50)
+          .height(70)
+          // 在 ForEach 循环中设置图片的位置
+          .position({ x: item.position.x, y: item.position.y })
+          .key(index.toString())
+          .onAppear(() => {
+            // 在敌人和宝箱出现时，将其名字存储在 enemyAndTreasureNames 中
+            this.enemyAndTreasureNames.set(index, item.name);
+          })
         }
       }, (item: CharacterData) => JSON.stringify(item))
 
