@@ -1,5 +1,7 @@
 import promptAction from '@ohos.promptAction';
 import { BusinessError } from '@ohos.base';
+import { Animator } from '@kit.ArkUI';
+import animator, { AnimatorResult } from '@ohos.animator';
 
 
 interface Position {
@@ -40,6 +42,7 @@ collisionRadius: number; // 角色碰撞半径
   exp: number; // 当前经验值
   nextLevelExp: number; //升级所需的经验值
   inventory: ItemData[]; // 角色的背包
+  live: boolean;
 }
 
 interface ItemData {
@@ -51,6 +54,11 @@ interface ItemData {
 
 @Component
 export struct GameArea {
+
+  @State buttonPressed: string | null = null; // 记录当前按下的按钮
+  @State characterSpeed: number = 2; // 角色移动速度
+  @State joystickAnimator: AnimatorResult | undefined = undefined;
+  @State timer: number = 0;
 
   @State enemyAndTreasureNames: Map<number, string> = new Map(); // 用于存储敌人和宝箱的名字
   @State battleReportAboveEnemy: Map<CharacterData, string> = new Map(); // 用于存储要显示在敌人头上的战斗报告
@@ -108,11 +116,22 @@ export struct GameArea {
     }; // 初始化 updateState 变量
   }
 
-  onInit() {
+  on() {
     // 在组件加载时生成敌人和宝箱
     this.generateRandomEntities();
+
   }
 
+  // 在 onDestroy 中停止定时器
+  onDestroy() {
+    clearInterval(this.timer);
+  }
+
+  aboutToDisappear() {// 在组件销毁时停止动画，避免内存泄漏
+    if (this.joystickAnimator) {
+      this.joystickAnimator = undefined;
+    }
+  }
 
 
   //初始化角色、物品属性
@@ -136,7 +155,8 @@ export struct GameArea {
       type: 'player',
       exp: 0,
       nextLevelExp: 100,
-      inventory: []
+      inventory: [],
+      live: true
   },];
 
   // 随机生成敌人和宝箱的方法
@@ -184,7 +204,8 @@ export struct GameArea {
           collisionRadius: 25,
           exp:0, // 初始经验值
           nextLevelExp: 100, // 升级所需经验值
-          inventory: [] // 初始空背包
+          inventory: [], // 初始空背包
+          live: true,
         };
 
         // 检查新生成的敌人是否与现有角色或正在生成的敌人和宝箱重叠
@@ -226,7 +247,8 @@ export struct GameArea {
           collisionRadius: 25,
           exp:0, // 初始经验值
           nextLevelExp: 100, // 升级所需经验值
-          inventory: [] // 初始空背包
+          inventory: [], // 初始空背包
+          live: true,
         };
 
         //检查新生成的宝箱是否与现有角色或正在生成的敌人和宝箱重叠
@@ -265,30 +287,45 @@ export struct GameArea {
 
   @State isMoving: boolean = false; // 是否正在移动
 
-  // 处理触摸事件
-
-
   // 更新角色位置
-  updateCharacterPosition() {
-    // 计算角色的移动速度
-    const speed = 5; // 可以根据需要调整
-
-    // 计算角色的移动方向
-    const angle = Math.atan2(this.joystickY, this.joystickX);
+  moveCharacter(direction: string) {
+    // 设置固定的移动距离
+    const fixedSpeed = 5; // 你可以根据需要调整这个值
 
     // 计算角色在 x 和 y 方向上的移动距离
-    const dx = speed * Math.cos(angle);
-    const dy = speed * Math.sin(angle);
+    let dx = 0;
+    let dy = 0;
+    switch (direction) {
+      case 'up':
+        dy = -fixedSpeed;
+        break;
+      case 'down':
+        dy = fixedSpeed;
+        break;
+      case 'left':
+        dx = -fixedSpeed;
+        break;
+      case 'right':
+        dx = fixedSpeed;
+        break;
+    }
 
     // 更新角色的位置
-    this.characters[0].position.x += dx;
-    this.characters[0].position.y += dy;
+    const newCharacterX: number = this.characters[0].position.x + dx;
+    const newCharacterY: number = this.characters[0].position.y + dy;
+
+    // 使用 animateTo 平滑过渡到新的角色位置
+    animateTo({ duration: 16 }, () => {
+      this.characters[0].position.x = newCharacterX;
+      this.characters[0].position.y = newCharacterY;
+      this.updateState(); // 在动画结束后调用 updateState
+    });
 
     // 处理边界碰撞
-    const gameAreaWidth = 200;
-    const gameAreaHeight = 600;
-    const characterWidth = 50;
-    const characterHeight = 50;
+    const gameAreaWidth = 200; // 替换成你的游戏区域宽度
+    const gameAreaHeight = 600; // 替换成你的游戏区域高度
+    const characterWidth = 50; // 替换成你的角色宽度
+    const characterHeight = 50; // 替换成你的角色高度
 
     if (this.characters[0].position.x < 0) {
       this.characters[0].position.x = 0;
@@ -302,47 +339,9 @@ export struct GameArea {
       this.characters[0].position.y = gameAreaHeight - characterHeight;
     }
 
-    this.isPlayerMoving = true; // 设置玩家正在移动
-    this.isPlayerStopped = false; // 设置玩家没有停止移动
-    // 在移动结束后重置 isPlayerMoving 和 isPlayerStopped，并调整玩家图片的朝向
-    // 在移动结束后重置 isPlayerMoving 和 isPlayerStopped，并调整玩家图片的朝向
-    setTimeout(() => {
-      this.isPlayerMoving = false;
-      this.isPlayerStopped = true;
-      if (this.actionEnd) { // 在事件结束后检测碰撞
-        this.checkCollisions();
-      }
+    // ... 其他逻辑（例如碰撞检测、战斗等） ...
 
-
-      // 如果玩家停止移动且 joystickX 小于 0，则翻转玩家图片
-      if (this.isPlayerStopped && this.joystickX < 0) {this.playerScaleX = -1;
-      } else {
-        this.playerScaleX = 1;
-      }
-    }, 16); // 16 毫秒相当于 60 帧每秒
-
-
-    if (this.shouldStartBattle && this.battleTarget) {
-      // 开始战斗
-      this.startBattle(this.battleTarget);
-      this.shouldStartBattle = false;
-      this.battleTarget = null;
-    }
-
-      // 显示弹窗，判断角色是否移动以及画面刷新是否生效
-      this.showMoveDialog = true; // 显示移动弹窗
-      //this.showDialog();
-      //this.dialogMessage = `角色正在向 ${direction} 移动，新位置为 (${this.characters[0].position.x}, ${this.characters[0].position.y})`;
-
-
-      this.updateState(); // 触发重新渲染
-
-      this.checkCollisions(); // 检测碰撞
-
-      //this.showCharacterPositions(); // 显示所有角色的信息
-
-      this.generateRandomEntities(); // 刷新敌人和宝箱
-
+    this.updateState(); // 触发重新渲染
   }
 
 
@@ -373,15 +372,18 @@ export struct GameArea {
          const character1 = this.characters[i];
          const character2 = this.characters[j];
 
-         // 计算角色之间的距离
-         const distance = Math.sqrt(
-           Math.pow(character1.position.x - character2.position.x, 2) +
-           Math.pow(character1.position.y - character2.position.y, 2)
-         );
+         // 只有当两个角色都存活时才进行碰撞检测
+         if (character1.live && character2.live) {
+           // 计算角色之间的距离
+           const distance = Math.sqrt(
+             Math.pow(character1.position.x - character2.position.x, 2) +
+             Math.pow(character1.position.y - character2.position.y, 2)
+           );
 
-         // 如果距离小于两个角色的碰撞半径之和，则触发碰撞事件
-         if (distance < character1.collisionRadius + character2.collisionRadius) {
-           this.handleCollision(character1, character2);
+           // 如果距离小于两个角色的碰撞半径之和，则触发碰撞事件
+           if (distance < character1.collisionRadius + character2.collisionRadius) {
+             this.handleCollision(character1, character2);
+           }
          }
        }
      }
@@ -392,19 +394,21 @@ export struct GameArea {
     if (character1 === this.characters[0]) { // 确保是玩家触发了碰撞
       this.showMoveDialog = false; // 不显示移动弹窗
       try{
-        if (character2.type === 'enemy') {
+        if (character2.type === 'enemy' && character2.live) {
           // 玩家与敌人发生碰撞，设置战斗标志
           this.shouldStartBattle = true;
           this.battleTarget = character2;
-        } else if (character2.type === 'npc') {
+        } else if (character2.type === 'npc' && character2.live) {
           // 玩家与 NPC 发生碰撞，触发对话
           this.npcDialogMessage = `${character2.name}：欢迎来到冒险世界！`; // 存储对话内容
           this.showDialog();
-        } else if (character2.type === 'treasure') {
+        } else if (character2.type === 'treasure' && character2.live) {
           // 玩家与宝箱发生碰撞，触发开宝箱事件
           const reward = this.generateRandomReward();
           this.handleReward(reward); // 直接调用 handleReward 函数
 
+          // 将宝箱的 live 属性设置为 false
+          character2.live = false;
           // 从 characters 数组中删除宝箱
           const index = this.characters.indexOf(character2);
           if (index > -1) {
@@ -533,6 +537,8 @@ export struct GameArea {
   // 处理敌人死亡
   handleEnemyDeath(enemy: CharacterData) {
 
+    enemy.live = false; // 将敌人的存活状态设置为 false
+
     // 奖励经验值和道具
     const expGain = 0; // 可以根据敌人等级调整
     const itemGain = this.getRandomItem();
@@ -556,6 +562,8 @@ export struct GameArea {
 
   // 处理玩家死亡
   handlePlayerDeath() {
+
+    this.characters[0].live = false; // 将玩家的存活状态设置为 false
     // 游戏结束
     this.dialogMessage = '你失败了！';
     this.showDialog();
@@ -627,6 +635,9 @@ default:
 
   // 处理宝箱奖励
   handleReward(reward: RewardData) {
+
+
+
     if (this.actionStart) {
       // 已经在事件中，不处理新的奖励事件
       return;
@@ -803,43 +814,43 @@ default:
       // 敌人和宝箱
       ForEach(this.characters, (item: CharacterData, index: number) => {
         if (item.type === 'enemy' || item.type === 'treasure') {
-          Stack() {
-            Image($r(item.avatar))
-              .width(50)
-              .height(50)
-                // 移除 position 属性，直接使用 item.position.x 和 item.position.y
-              .key(index.toString())
-                // 敌人图片朝向玩家
-              .scale({
-                x: item.type === 'enemy' && this.isPlayerFacingEnemy(item) ? -1 : 1,
-                y: 1
-              })
-            // 显示敌人和宝箱的名字
-            Text(this.enemyAndTreasureNames.get(index) || '')
-              .fontSize(12)
-              .fontColor(Color.Red)
-              .position({ x: 0, y: -20 })
-            // 显示战斗报告
-            if (this.battleReportAboveEnemy.has(item)) {
-              Text(this.battleReportAboveEnemy.get(item) || '')
-                .fontSize(14)
-                .fontColor(Color.Red)
-                .backgroundColor(Color.Gray)
-                .position({
-                  x: item.position.x + 10, // 根据敌人的位置调整 x 坐标
-                  y: item.position.y - 50 // 根据敌人的位置调整 y 坐标
+          if (item.live) { // 只渲染存活的敌人和宝箱
+            Stack() {
+              Image($r(item.avatar))
+                .width(50)
+                .height(50)// 移除 position 属性，直接使用 item.position.x 和 item.position.y
+                .key(index.toString())// 敌人图片朝向玩家
+                .scale({
+                  x: item.type === 'enemy' && this.isPlayerFacingEnemy(item) ? -1 : 1,
+                  y: 1
                 })
+              // 显示敌人和宝箱的名字
+              Text(this.enemyAndTreasureNames.get(index) || '')
+                .fontSize(12)
+                .fontColor(Color.Red)
+                .position({ x: 0, y: -20 })
+              // 显示战斗报告
+              if (this.battleReportAboveEnemy.has(item)) {
+                Text(this.battleReportAboveEnemy.get(item) || '')
+                  .fontSize(14)
+                  .fontColor(Color.Red)
+                  .backgroundColor(Color.Gray)
+                  .position({
+                    x: item.position.x + 10, // 根据敌人的位置调整 x 坐标
+                    y: item.position.y - 50 // 根据敌人的位置调整 y 坐标
+                  })
+              }
             }
+            .width(50)
+            .height(70)
+            // 在 ForEach 循环中设置图片的位置
+            .position({ x: item.position.x, y: item.position.y })
+            .key(index.toString())
+            .onAppear(() => {
+              // 在敌人和宝箱出现时，将其名字存储在 enemyAndTreasureNames 中
+              this.enemyAndTreasureNames.set(index, item.name);
+            })
           }
-          .width(50)
-          .height(70)
-          // 在 ForEach 循环中设置图片的位置
-          .position({ x: item.position.x, y: item.position.y })
-          .key(index.toString())
-          .onAppear(() => {
-            // 在敌人和宝箱出现时，将其名字存储在 enemyAndTreasureNames 中
-            this.enemyAndTreasureNames.set(index, item.name);
-          })
         }
       }, (item: CharacterData) => JSON.stringify(item))
 
@@ -903,99 +914,137 @@ default:
 
         // 玩家操作区域
         Column() {
-          Row() {
-            Column() {
-              Blank() //占据 0% - 60% 的空间
-                .height('70%')
-
-              // 轮盘移动按钮
-              Stack() {
-                // 圆形区域
-                Circle()
-                  .width(150)
-                  .height(150)
-                  .backgroundColor(Color.Transparent)
-                  .opacity(0.5)
-
-                // 指示器
-                Image($r('app.media.joystick'))
-                  .width(50)
-                  .height(50)
-                  .position({ x: this.joystickX, y: this.joystickY })
-                  .gesture(
-                    PanGesture(this.panOption)
-                      .onActionStart((event: GestureEvent) => {
-                        console.info('Pan start');
-                        this.isDragging = true;
-                      })
-                      .onActionUpdate((event: GestureEvent) => {
-                        // 计算指示器的新位置
-                        let newOffsetX = event.offsetX;
-                        let newOffsetY = event.offsetY;
-
-                        // 限制指示器的移动范围
-                        const maxDistance = 75; // 指示器可以移动的最大距离
-                        const distance = Math.min(Math.sqrt(newOffsetX * newOffsetX + newOffsetY * newOffsetY), maxDistance);
-                        const angle = Math.atan2(newOffsetY, newOffsetX);
-                        newOffsetX = distance * Math.cos(angle);
-                        newOffsetY = distance * Math.sin(angle);
-
-                        // 更新指示器的位置
-                        this.joystickX = newOffsetX; // 直接设置偏移量
-                        this.joystickY = newOffsetY; // 直接设置偏移量
-
-
-                        // 更新角色位置
-                        this.updateCharacterPosition(); // 每次 joystick 位置变化时都调用
-
-                    })
-                      .onActionEnd((event: GestureEvent) => {
-                        console.info('Pan end');
-                        this.isDragging = false;
-
-                        // 使用动画效果将指示器移动回中心位置
-                        animateTo({ duration: 200 }, () => {
-                          this.joystickX = 0;
-                          this.joystickY = 0;
-                        });
-
-                      })
-                  )
-              }
-              .position({ x: 25, y: 425 }) // 设置轮盘中心的坐标
-              .height('20%') // 移动按钮区域占据 20% 的屏幕高度
-              .padding({ top: 10, bottom: 10, left: 10, right: 10 }) // 添加内边距
-
-              Blank() // 占据 90% - 100% 的空间
-                .height('10%')
-            }
-            .width('50%')
-
-
-            // 背包按钮
-            Stack({ alignContent: Alignment.Center }) {
-              Column() {
-                Button() {
-                  Image($r('app.media.backpack'))
-                    .width(80)
-                    .height(80)
-                    .backgroundColor(Color.Transparent)
-                }
-                .onClick(() => {
-                  // 显示背包弹窗
-                  this.showInventoryDialog();
-                  this.updateState(); // 手动触发重新渲染
-                })
-              }
-            }
-            .width('70%')
+          Blank()
             .height('70%')
-            .align(Alignment.Bottom)
+          // 控制器区域
+          Row() {
+            // 上按钮
+            Button(){
+              Image($r('app.media.up'))
+                .width(50)
+                .height(50)
+            }
+            .width(50) // 设置按钮宽度
+            .height(50) // 设置按钮高度
+            .gesture(
+              TapGesture()
+                .onAction((event: GestureEvent)=> {
+                  this.moveCharacter('up');
+                  this.buttonPressed = 'up'; // 记录按下的按钮
+                })
+            )
+            .stateStyles({
+              pressed: {
+                opacity: 0.5 // 按下时降低透明度
+              },
+              normal: {
+                opacity: 1 // 正常状态下恢复透明度
+              }
+            })
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Up) {
+                this.buttonPressed = null; // 释放按钮时清空记录
+                this.updateState(); // 触发重新渲染
+              }
+            })
+
+            // 下按钮
+            Button(){
+              Image($r('app.media.down'))
+                .width(50)
+                .height(50)
+            }
+            .width(50) // 设置按钮宽度
+            .height(50) // 设置按钮高度
+            .gesture(
+              TapGesture()
+                .onAction((event: GestureEvent)=> {
+                  this.moveCharacter('down');
+                  this.buttonPressed = 'up'; // 记录按下的按钮
+                })
+            )
+            .stateStyles({
+              pressed: {
+                opacity: 0.5 // 按下时降低透明度
+              },
+              normal: {
+                opacity: 1 // 正常状态下恢复透明度
+              }
+            })
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Up) {
+                this.buttonPressed = null; // 释放按钮时清空记录
+                this.updateState(); // 触发重新渲染
+              }
+            })
+
+            // 左按钮
+            Button(){
+              Image($r('app.media.left'))
+                .width(50)
+                .height(50)
+            }
+            .width(50) // 设置按钮宽度
+            .height(50) // 设置按钮高度
+            .gesture(
+              TapGesture()
+                .onAction((event: GestureEvent)=> {
+                  this.moveCharacter('left');
+                  this.buttonPressed = 'up'; // 记录按下的按钮
+                })
+            )
+            .stateStyles({
+              pressed: {
+                opacity: 0.5 // 按下时降低透明度
+              },
+              normal: {
+                opacity: 1 // 正常状态下恢复透明度
+              }
+            })
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Up) {
+                this.buttonPressed = null; // 释放按钮时清空记录
+                this.updateState(); // 触发重新渲染
+              }
+            })
+
+            // 右按钮
+            Button(){
+              Image($r('app.media.right'))
+                .width(50)
+                .height(50)
+            }
+            .width(50) // 设置按钮宽度
+            .height(50) // 设置按钮高度
+            .gesture(
+              TapGesture()
+                .onAction((event: GestureEvent)=> {
+                  this.moveCharacter('right');
+                  this.buttonPressed = 'up'; // 记录按下的按钮
+                })
+            )
+            .stateStyles({
+              pressed: {
+                opacity: 0.5 // 按下时降低透明度
+              },
+              normal: {
+                opacity: 1 // 正常状态下恢复透明度
+              }
+            })
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Up) {
+                this.buttonPressed = null; // 释放按钮时清空记录
+                this.updateState(); // 触发重新渲染
+              }
+            })
 
 
           }
           .width('100%')
-          .height('100%') // 设置玩家操作区域的高度
+          .height('15%') // 设置玩家操作区域的高度
+
+          Blank()
+            .height('15%')
 
         }
         .width('100%')
