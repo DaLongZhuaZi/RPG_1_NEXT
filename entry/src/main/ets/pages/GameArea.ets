@@ -55,6 +55,11 @@ interface ItemData {
 @Component
 export struct GameArea {
 
+  @State isFlipped: boolean = false;
+  @State renderTrigger: number = 0;
+  @State battleReportPositionY: number = 0;
+  @State battleReportTargetY: number = 0;
+  @State characterPositionKey: number = 0;
   @State buttonPressed: string | null = null; // 记录当前按下的按钮
   @State characterSpeed: number = 2; // 角色移动速度
   @State joystickAnimator: AnimatorResult | undefined = undefined;
@@ -63,14 +68,13 @@ export struct GameArea {
   @State enemyAndTreasureNames: Map<number, string> = new Map(); // 用于存储敌人和宝箱的名字
   @State battleReportAboveEnemy: Map<CharacterData, string> = new Map(); // 用于存储要显示在敌人头上的战斗报告
 
-  @State isPlayerMoving: boolean = false; // 玩家是否正在移动
   @State battleReportAbovePlayer: string = ''; // 玩家头顶的战斗报告
   @State isPlayerStopped: boolean = true; // 玩家是否停止移动
   @State playerScaleX: number = 1; // 玩家图片的 X 轴缩放比例
   @State actionStart: boolean = false; // 事件开始标识
   @State actionEnd: boolean = true; // 事件结束标识
 
-  @State gameAreaWidth: number = 400; // 设置游戏区域的宽度
+  @State gameAreaWidth: number = 450; // 设置游戏区域的宽度
   @State gameAreaHeight: number = 600; // 设置游戏区域的高度
 
   @State joystickX: number = 0; // joystick 的 x 坐标（不受限制）
@@ -86,6 +90,7 @@ export struct GameArea {
 
 
   @State dialogMessage: string = '';
+  @State dialogTitle: string = '';
   @State npcDialogMessage: string = '';
   @State showMoveDialog: boolean = false;
   // 显示弹窗的函数
@@ -93,7 +98,7 @@ export struct GameArea {
     if (this.dialogMessage !== '') {
       try {
         promptAction.showDialog({
-          title: '事件',
+          title: this.dialogTitle,
           message: this.dialogMessage,
           buttons: []
         });
@@ -116,17 +121,15 @@ export struct GameArea {
     }; // 初始化 updateState 变量
   }
 
-  on() {
+  onInit() {
     // 在组件加载时生成敌人和宝箱
     this.generateRandomEntities();
 
   }
-
   // 在 onDestroy 中停止定时器
   onDestroy() {
-    clearInterval(this.timer);
-  }
 
+  }
   aboutToDisappear() {// 在组件销毁时停止动画，避免内存泄漏
     if (this.joystickAnimator) {
       this.joystickAnimator = undefined;
@@ -153,21 +156,149 @@ export struct GameArea {
     direction: null,
     collisionRadius: 25,
       type: 'player',
-      exp: 0,
+      exp: 30,
       nextLevelExp: 100,
       inventory: [],
       live: true
   },];
 
+  @State isMoving: boolean = false; // 是否正在移动
+  // 角色移动
+  moveCharacter(direction: string) {
+
+    // 检查玩家是否还活着
+    if (this.characters[0].hp == 0) {
+      this.dialogTitle = '☠死亡弹窗☠';
+      this.dialogMessage = '你已经死亡了！无法移动';
+      this.showDialog();
+      return;
+    }
+
+    // 更新 isFlipped 状态变量
+    if (direction === 'left') {
+      this.isFlipped = true;
+    } else if (direction === 'right') {
+      this.isFlipped = false;
+    }
+
+    // 设置固定的移动距离
+    const fixedSpeed = 25; // 你可以根据需要调整这个值
+
+    // 设置 isPlayerStopped 为 false，表示角色正在移动
+    this.isPlayerStopped = false;
+
+    // 角色移动前清空战斗报告
+    this.battleReportAbovePlayer = '';
+
+
+    // 计算角色在 x 和 y 方向上的移动距离
+    let dx = 0;
+    let dy = 0;
+    switch (direction) {
+      case 'up':
+        dy = -fixedSpeed;
+        break;
+      case 'down':
+        dy = fixedSpeed;
+        break;
+      case 'left':
+        dx = -fixedSpeed;
+        break;
+      case 'right':
+        dx = fixedSpeed;
+        break;
+    }
+
+    // 更新角色的位置
+    const newCharacterX: number = this.characters[0].position.x + dx;
+    const newCharacterY: number = this.characters[0].position.y + dy;
+
+
+    // 使用 animateTo 平滑过渡到新的角色位置
+    animateTo({ duration: 100 }, () => {
+      this.characters[0].position.x = newCharacterX;
+      this.characters[0].position.y = newCharacterY;
+      this.updateState(); // 在动画结束后调用 updateState
+    });
+
+    // 更新 characterPositionKey 以强制刷新角色图片
+    this.characterPositionKey++;
+
+    // 处理边界碰撞
+    const gameAreaWidth = this.gameAreaWidth; // 替换成你的游戏区域宽度
+    const gameAreaHeight = this.gameAreaHeight; // 替换成你的游戏区域高度
+    const characterWidth = 50; // 替换成你的角色宽度
+    const characterHeight = 50; // 替换成你的角色高度
+
+    if (this.characters[0].position.x < 0) {
+      this.characters[0].position.x = 0;
+    } else if (this.characters[0].position.x + characterWidth > gameAreaWidth) {
+      this.characters[0].position.x = gameAreaWidth - characterWidth;
+    }
+
+    if (this.characters[0].position.y < 0) {
+      this.characters[0].position.y = 0;
+    } else if (this.characters[0].position.y + characterHeight > gameAreaHeight) {
+      this.characters[0].position.y = gameAreaHeight - characterHeight;
+    }
+
+    // 设置 isPlayerStopped 为 true，表示角色停止移动
+    this.isPlayerStopped = true;
+
+    this.generateRandomEntities();
+    this.checkCollisions();
+
+    if (this.shouldStartBattle) {
+      // 获取敌人在 characters 数组中的索引
+      const enemyIndex = this.characters.indexOf(this.battleTarget!);
+      if (enemyIndex > -1) {
+        // 开始战斗，并将敌人和敌人索引传递给 startBattle 函数
+        this.startBattle(this.battleTarget!, enemyIndex);
+      }
+      this.shouldStartBattle = false;
+      this.battleTarget = null;
+    }
+
+    this.updateState(); // 触发重新渲染
+  }
+
   // 随机生成敌人和宝箱的方法
   generateRandomEntities() {
-
 
     // 创建一个临时数组来存储正在生成的敌人和宝箱
     const newCharacters: CharacterData[] = [];
 
+    // 首先，检查所有现有的敌人和宝箱是否重叠
+    for (let i = 0; i < this.characters.length; i++) {
+      for (let j = i + 1; j < this.characters.length; j++) {
+        const character1 = this.characters[i];
+        const character2 = this.characters[j];
+
+        // 只检查敌人和宝箱
+        if ((character1.type === 'enemy' || character1.type === 'treasure') &&
+          (character2.type === 'enemy' || character2.type === 'treasure')) {
+          // 计算角色之间的距离
+          const distance = Math.sqrt(
+            Math.pow(character1.position.x - character2.position.x, 3) +
+            Math.pow(character1.position.y - character2.position.y, 3)
+          );
+
+          // 如果距离小于两个角色的碰撞半径之和，则将其中一个角色的位置随机化
+          if (distance < character1.collisionRadius + character2.collisionRadius) {
+            // 随机选择一个角色进行位置随机化
+            const characterToRandomize = Math.random() < 0.5 ? character1 : character2;
+            do {
+              characterToRandomize.position = {
+                x: Math.floor(Math.random() * (this.gameAreaWidth - 75)),
+                y: Math.floor(Math.random() * (this.gameAreaHeight - 75))
+              };} while (this.isCharacterOverlapping(characterToRandomize, this.characters)); // 确保新的位置不与其他角色重叠
+          }
+        }
+      }
+    }
+
     // 计算剩余可生成的敌人数量
-    const remainingEnemies = 7 - this.numEnemy;
+    const remainingEnemies = 5 - this.numEnemy;
     // 随机生成 0 到 3 个敌人，但不超过剩余可生成的敌人数量
     const numEnemiesToGenerate = Math.min(Math.floor(Math.random() * 4), remainingEnemies);
     for (let i= 0; i < numEnemiesToGenerate; i++) {
@@ -216,10 +347,11 @@ export struct GameArea {
       this.numEnemy++;
 
       // ... 显示弹窗的代码 ...
+
     }
 
     // 计算剩余可生成的宝箱数量
-    const remainingTreasures = 4 - this.numTreasure;
+    const remainingTreasures = 3 - this.numTreasure;
     // 随机生成 0 到 3 个宝箱，但不超过剩余可生成的宝箱数量
     const numTreasuresToGenerate = Math.min(Math.floor(Math.random() * 4), remainingTreasures);
     for (let i = 0; i < numTreasuresToGenerate; i++) {
@@ -270,78 +402,20 @@ export struct GameArea {
   // 修改 isCharacterOverlapping 函数，使其接受一个额外的数组作为参数
   isCharacterOverlapping(newCharacter: CharacterData, allCharacters: CharacterData[]): boolean {
     for (const existingCharacter of allCharacters) {
-      const distance = Math.sqrt(
-        Math.pow(newCharacter.position.x - existingCharacter.position.x, 2) +
-        Math.pow(newCharacter.position.y - existingCharacter.position.y, 2)
-      );
+      // 只检查存活的角色
+      if (existingCharacter.live) {
+        const distance = Math.sqrt(
+          Math.pow(newCharacter.position.x - existingCharacter.position.x, 2) +
+          Math.pow(newCharacter.position.y - existingCharacter.position.y, 2)
+        );
 
-      if (distance < newCharacter.collisionRadius * 3) { // 这里使用 3 作为倍数，以确保角色之间有足够的间距
-        return true; // 重叠
+        if (distance < newCharacter.collisionRadius * 3) { // 这里使用 3 作为倍数，以确保角色之间有足够的间距
+          return true; // 重叠
+        }
       }
     }
 
     return false; // 不重叠
-  }
-
-
-
-  @State isMoving: boolean = false; // 是否正在移动
-
-  // 更新角色位置
-  moveCharacter(direction: string) {
-    // 设置固定的移动距离
-    const fixedSpeed = 5; // 你可以根据需要调整这个值
-
-    // 计算角色在 x 和 y 方向上的移动距离
-    let dx = 0;
-    let dy = 0;
-    switch (direction) {
-      case 'up':
-        dy = -fixedSpeed;
-        break;
-      case 'down':
-        dy = fixedSpeed;
-        break;
-      case 'left':
-        dx = -fixedSpeed;
-        break;
-      case 'right':
-        dx = fixedSpeed;
-        break;
-    }
-
-    // 更新角色的位置
-    const newCharacterX: number = this.characters[0].position.x + dx;
-    const newCharacterY: number = this.characters[0].position.y + dy;
-
-    // 使用 animateTo 平滑过渡到新的角色位置
-    animateTo({ duration: 16 }, () => {
-      this.characters[0].position.x = newCharacterX;
-      this.characters[0].position.y = newCharacterY;
-      this.updateState(); // 在动画结束后调用 updateState
-    });
-
-    // 处理边界碰撞
-    const gameAreaWidth = 200; // 替换成你的游戏区域宽度
-    const gameAreaHeight = 600; // 替换成你的游戏区域高度
-    const characterWidth = 50; // 替换成你的角色宽度
-    const characterHeight = 50; // 替换成你的角色高度
-
-    if (this.characters[0].position.x < 0) {
-      this.characters[0].position.x = 0;
-    } else if (this.characters[0].position.x + characterWidth > gameAreaWidth) {
-      this.characters[0].position.x = gameAreaWidth - characterWidth;
-    }
-
-    if (this.characters[0].position.y < 0) {
-      this.characters[0].position.y = 0;
-    } else if (this.characters[0].position.y + characterHeight > gameAreaHeight) {
-      this.characters[0].position.y = gameAreaHeight - characterHeight;
-    }
-
-    // ... 其他逻辑（例如碰撞检测、战斗等） ...
-
-    this.updateState(); // 触发重新渲染
   }
 
 
@@ -364,7 +438,6 @@ export struct GameArea {
        // 玩家没有停止移动或事件未结束，不检测碰撞
        return;
      }
-
 
      // 遍历所有角色（包括玩家）
      for (let i = 0; i < this.characters.length; i++) {
@@ -391,6 +464,7 @@ export struct GameArea {
 
   // 处理碰撞事件
   handleCollision(character1: CharacterData, character2: CharacterData) {
+
     if (character1 === this.characters[0]) { // 确保是玩家触发了碰撞
       this.showMoveDialog = false; // 不显示移动弹窗
       try{
@@ -398,15 +472,23 @@ export struct GameArea {
           // 玩家与敌人发生碰撞，设置战斗标志
           this.shouldStartBattle = true;
           this.battleTarget = character2;
+          // 获取敌人在 characters 数组中的索引
+          const enemyIndex = this.characters.indexOf(character2);
+          if (enemyIndex > -1) {
+            // 开始战斗，并将敌人索引传递给 startBattle 函数
+            this.startBattle(character2, enemyIndex);
+          }
+
         } else if (character2.type === 'npc' && character2.live) {
-          // 玩家与 NPC 发生碰撞，触发对话
+          // 玩家与 NPC 发生碰撞，
+          this.dialogTitle = '触发对话！';
           this.npcDialogMessage = `${character2.name}：欢迎来到冒险世界！`; // 存储对话内容
           this.showDialog();
+
         } else if (character2.type === 'treasure' && character2.live) {
           // 玩家与宝箱发生碰撞，触发开宝箱事件
           const reward = this.generateRandomReward();
           this.handleReward(reward); // 直接调用 handleReward 函数
-
           // 将宝箱的 live 属性设置为 false
           character2.live = false;
           // 从 characters 数组中删除宝箱
@@ -423,6 +505,7 @@ export struct GameArea {
       }
     }
   }
+
 
   // 计算伤害
   calculateDamage(attacker: CharacterData, defender: CharacterData): number {
@@ -444,16 +527,7 @@ export struct GameArea {
 
 
   // 开始战斗
-  startBattle(enemy: CharacterData) {
-
-    // 检查玩家的 HP 是否为 0
-    if (this.characters[0].hp <= 0) {
-      this.dialogMessage = '你已经死亡，无法战斗！';
-      this.showDialog();
-      this.actionStart = false;
-      this.actionEnd = true;
-      return;
-    }
+  startBattle(enemy: CharacterData, enemyIndex: number) {
 
     if (this.currentBattleEnemy === enemy) {
       // 已经在与这个敌人战斗，不开始新的战斗
@@ -471,8 +545,6 @@ export struct GameArea {
     this.actionEnd = false;
 
 
-
-
     // 计算伤害、防御和闪避率
     const playerDamage = this.calculateDamage(this.characters[0], enemy);
     const enemyDamage = this.calculateDamage(enemy, this.characters[0]);
@@ -483,21 +555,20 @@ export struct GameArea {
 
     // 构建战斗报告
     let battleReport = '';
-    // 将战斗报告存储在 battleReportAbovePlayer 中
-    this.battleReportAbovePlayer = battleReport;
 
     // 玩家攻击
     if (Math.random() < enemyDodgeRate) {
-      battleReport += `闪避\n`;
+      battleReport += `⚔️战斗报告⚔️\n闪避\n`;
     } else {
       const actualPlayerDamage = Math.max(0, playerDamage - enemyDefense);
       enemy.hp -= actualPlayerDamage;
-      battleReport += `${enemy.name}受伤${actualPlayerDamage} 点`;
+      battleReport += `⚔️战斗报告⚔️\n${enemy.name}受伤\n${actualPlayerDamage} 点\n`;
     }
+
 
     // 检查敌人是否死亡
     if (enemy.hp <= 0) {
-      battleReport += `${enemy.name} 死亡！`;
+      battleReport += `⚔️战斗报告⚔️\n${enemy.name} 死亡！\n`;
       this.handleEnemyDeath(enemy); // 处理敌人死亡
       this.battleReportAbovePlayer = battleReport; // 更新战斗报告
       this.actionStart = false;
@@ -507,16 +578,16 @@ export struct GameArea {
 
     // 敌人攻击
     if (Math.random() < playerDodgeRate) {
-      battleReport += `闪避\n`;
+      battleReport += `⚔️战斗报告⚔️\n闪避\n`;
     } else {
       const actualEnemyDamage = Math.max(0, enemyDamage - playerDefense);
       this.characters[0].hp -= actualEnemyDamage;
-      battleReport += `${enemy.name}受伤${actualEnemyDamage}点`;
+      battleReport += `⚔️战斗报告⚔️\n${enemy.name}受伤\n${actualEnemyDamage}点\n`;
     }
 
     // 检查玩家是否死亡
     if (this.characters[0].hp <= 0) {
-      battleReport += `你死亡了！`;
+      battleReport += `⚔️战斗报告⚔️\n你死亡了！\n`;
       this.handlePlayerDeath(); // 处理玩家死亡
       this.battleReportAbovePlayer = battleReport; // 更新战斗报告
       this.actionStart = false;
@@ -526,10 +597,28 @@ export struct GameArea {
 
     // 将战斗报告存储在 battleReportAboveEnemy 中
     this.battleReportAboveEnemy.set(enemy, battleReport); // 在每次战斗时更新战斗报告
+    this.battleReportAbovePlayer = battleReport;
+
+    // 设置战斗报告的目标位置
+    this.battleReportTargetY = this.characters[0].position.y - 30; // 向上移动 30 像素
+
+    // 启动飘字动画
+    animateTo({ duration: 100 }, () => {
+      // 在动画的每一帧更新战斗报告的位置
+      this.battleReportPositionY = this.battleReportTargetY;
+
+      // 在动画结束后清空战斗报告
+      this.battleReportAbovePlayer = '';
+      this.battleReportTargetY = 0;
+      this.battleReportPositionY = 0;
+    });
 
     // 战斗结束后重置标识符
     this.actionStart = false;
     this.actionEnd = true;
+
+    // 手动触发重新渲染
+    this.renderTrigger++;
 
     this.updateState(); // 触发重新渲染
   }
@@ -540,8 +629,16 @@ export struct GameArea {
     enemy.live = false; // 将敌人的存活状态设置为 false
 
     // 奖励经验值和道具
-    const expGain = 0; // 可以根据敌人等级调整
+    const expGain = 10; // 可以根据敌人等级调整
     const itemGain = this.getRandomItem();
+
+    this.characters[0].exp += expGain;
+    this.characters[0].inventory.push(itemGain);
+
+    this.dialogTitle = '⚔️战斗胜利⚔️';
+    this.dialogMessage = '你获得了 ' + expGain + ' 点经验值和' + itemGain.name + '\n';
+    this.showDialog();
+
 
     this.characters[0].exp += expGain;
     this.characters[0].inventory.push(itemGain);
@@ -551,11 +648,14 @@ export struct GameArea {
     if (index > -1) {
       this.characters.splice(index, 1);
       this.numEnemy--;
-      this.enemyAndTreasureNames.delete(index); // 从 enemyAndTreasureNames 中删除敌人的名字
+      this.enemyAndTreasureNames.delete(index);
     }
 
     // 检查是否升级
     this.checkLevelUp();
+
+    // 手动触发重新渲染
+    this.renderTrigger++;
 
     this.updateState(); // 触发重新渲染
   }
@@ -565,6 +665,7 @@ export struct GameArea {
 
     this.characters[0].live = false; // 将玩家的存活状态设置为 false
     // 游戏结束
+    this.dialogTitle = '☠死亡报告☠';
     this.dialogMessage = '你失败了！';
     this.showDialog();
 
@@ -598,6 +699,7 @@ export struct GameArea {
       this.characters[0].nextLevelExp *= 1.5; // 升级所需经验值增加
 
       // 提醒玩家前往人物页面增加属性点
+      this.dialogTitle = '你升级了';
       this.dialogMessage = '你升级了！请前往人物页面增加属性点';
       this.showDialog();
     }
@@ -615,28 +717,26 @@ export struct GameArea {
          type: 'gold',
          amount: Math.floor(Math.random() * 100) + 1 // 随机获得 1-100 金币
        };
-  case 'weapon':
-  return {
-  type: 'weapon',
-  name: '神秘之剑', // 替换为你实际的武器名称
-  description: '一把散发着神秘气息的剑' // 替换为你实际的武器描述
-};
-case 'keyItem':
-return {
-  type: 'keyItem',
-  name: '古老的钥匙', // 替换为你实际的任务道具名称
-  description: '一把看起来非常古老的钥匙' // 替换为你实际的任务道具描述
-};
-default:
-  return { type: 'gold', amount: 0 };
-}
+      case 'weapon':
+        return {
+          type: 'weapon',
+          name: '神秘之剑', // 替换为你实际的武器名称
+          description: '一把散发着神秘气息的剑' // 替换为你实际的武器描述
+        };
+      case 'keyItem':
+        return {
+          type: 'keyItem',
+          name: '古老的钥匙', // 替换为你实际的任务道具名称
+          description: '一把看起来非常古老的钥匙' // 替换为你实际的任务道具描述
+        };
+      default:
+        return { type: 'gold', amount: 0 };
+  }
 
 }
 
   // 处理宝箱奖励
   handleReward(reward: RewardData) {
-
-
 
     if (this.actionStart) {
       // 已经在事件中，不处理新的奖励事件
@@ -649,7 +749,7 @@ default:
     switch (reward.type) {
       case 'gold':
       // 将金币添加到玩家背包（或直接增加玩家的金币数量）
-        this.dialogMessage = `你获得了 ${reward.amount} 金币！`;
+        this.battleReportAbovePlayer = `💎发现了宝箱！💎\n你获得了 ${reward.amount} 金币！`;
         break;
       case 'weapon':
       // 将武器添加到玩家背包
@@ -661,7 +761,7 @@ default:
             // 实现武器的效果
           }
         });
-        this.dialogMessage = `你获得了 ${reward.name}！`;
+        this.battleReportAbovePlayer = `💎发现了宝箱！💎\n你获得了 ${reward.name}！`;
         break;
       case 'keyItem':
       // 将任务道具添加到玩家背包
@@ -673,7 +773,7 @@ default:
             // 实现任务道具的效果
           }
         });
-        this.dialogMessage = `你获得了 ${reward.name}！`;
+        this.battleReportAbovePlayer = `💎发现了宝箱！💎\n你获得了 ${reward.name}！`;
         break;
     }
 
@@ -718,8 +818,8 @@ default:
       let code = (error as BusinessError).code;
       console.error(`showDialog args error code is ${code}, message is ${message}`);
     }
-
   }
+
   // 调试功能：显示所有角色的所有信息
   showCharacterPositions() {
     let message = '';
@@ -789,16 +889,23 @@ default:
       .width('100%')
       .height('100%')
 
-      // 角色
-      Image($r('app.media.knight'))
-        .width(50)
-        .height(50)
-        .position({ x: this.characters[0].position.x, y: this.characters[0].position.y })
-          // 添加 key 属性，确保在状态更新时重新创建 Image 组件
-        .key(this.updateState.toString())
-          // 添加条件判断，如果 joystick 在左侧，则翻转图片
-        .scale({ x: this.playerScaleX, y: 1 }) // 直接修改 scale 属性
-
+      Row(){
+        // 玩家头顶的战斗报告
+        Text(this.battleReportAbovePlayer)
+          .position({ x: this.characters[0].position.x - 55, y: this.characters[0].position.y - 45 })
+          .fontSize(18)
+          .fontColor(Color.Black)
+          .backgroundColor(Color.Gray)
+          .zIndex(20)
+        // 角色
+        Image($r('app.media.knight'))
+          .width(50)
+          .height(50)
+          .position({ x: this.characters[0].position.x, y: this.characters[0].position.y })
+          .key(this.characterPositionKey.toString()) // 使用 characterPositionKey 作为 key
+          .scale({ x: this.isFlipped ? -1 : 1, y: 1 }) // 根据 isFlipped 翻转图片
+          .zIndex(10)
+      }
 
       // NPC
       ForEach(this.characters, (item: CharacterData, index: number) => {
@@ -808,6 +915,7 @@ default:
             .height(50)
             .position({ x: item.position.x, y: item.position.y })
             .key(index.toString())
+            .zIndex(5)
         }
       }, (item: CharacterData) => JSON.stringify(item))
 
@@ -829,23 +937,14 @@ default:
                 .fontSize(12)
                 .fontColor(Color.Red)
                 .position({ x: 0, y: -20 })
-              // 显示战斗报告
-              if (this.battleReportAboveEnemy.has(item)) {
-                Text(this.battleReportAboveEnemy.get(item) || '')
-                  .fontSize(14)
-                  .fontColor(Color.Red)
-                  .backgroundColor(Color.Gray)
-                  .position({
-                    x: item.position.x + 10, // 根据敌人的位置调整 x 坐标
-                    y: item.position.y - 50 // 根据敌人的位置调整 y 坐标
-                  })
-              }
             }
+            .key(this.renderTrigger.toString())
             .width(50)
             .height(70)
+            .zIndex(5)
             // 在 ForEach 循环中设置图片的位置
             .position({ x: item.position.x, y: item.position.y })
-            .key(index.toString())
+            .key(item.name) // 使用 item.name 作为 key
             .onAppear(() => {
               // 在敌人和宝箱出现时，将其名字存储在 enemyAndTreasureNames 中
               this.enemyAndTreasureNames.set(index, item.name);
@@ -859,25 +958,33 @@ default:
 
       // UI 元素
       Column() {
-        Text('角色状态')
+        Text('角色名称')
           .fontSize(25)
           .margin({ top: 10, left: 10 })
           .fontColor(Color.Red)
+          .zIndex(30)
 
         // 玩家等级和经验条
         Row() {
           Text(`等级: ${this.characters[0].level}`)
             .fontSize(18)
             .fontColor(Color.Red)
-          Progress({ value: this.characters[0].exp / this.characters[0].nextLevelExp })
+          Progress({ value: this.characters[0].exp , total: this.characters[0].nextLevelExp })
+            .style({
+              borderColor: Color.Blue,
+              borderWidth: 1,
+              content: `${this.characters[0].exp}/${this.characters[0].nextLevelExp}`,
+              font: {size: 16, style: FontStyle.Normal},
+              fontColor: Color.Red,
+              enableScanEffect: false,
+              showDefaultPercentage: false})
             .width(100)
-            .height(10)
+            .height(50)
             .margin({ left: 10 }) // 添加左边距
-          Text(`${this.characters[0].exp}/${this.characters[0].nextLevelExp}`)
-            .fontSize(18)
-            .fontColor(Color.Red)
-            .margin({ left: 10 }) // 添加左边距
-        }.margin({ top: 5, left: 10, right: 10 })
+            .backgroundColor(Color.Gray)
+        }
+        .margin({ top: 5, left: 10, right: 10 })
+        .zIndex(30)
 
         // 血条和蓝条
         Row() {
@@ -908,11 +1015,13 @@ default:
               .key(`mpBar-${this.characters[0].mp}`) // 添加 key 属性
             }
           .margin({ left: 10 })
-        }.margin({ top: 5, left: 10, right: 10 }) // 添加 margin 以保持间距
+        }.
+        margin({ top: 5, left: 10, right: 10 }) // 添加 margin 以保持间距
         .width('100%')
         .align(Alignment.TopStart)
+        .zIndex(30)
 
-        // 玩家操作区域
+        // 上下左右按钮区域
         Column() {
           Blank()
             .height('70%')
@@ -926,13 +1035,10 @@ default:
             }
             .width(50) // 设置按钮宽度
             .height(50) // 设置按钮高度
-            .gesture(
-              TapGesture()
-                .onAction((event: GestureEvent)=> {
-                  this.moveCharacter('up');
-                  this.buttonPressed = 'up'; // 记录按下的按钮
-                })
-            )
+            .onClick((event: ClickEvent) => { // 修改 onClick 事件
+              this.moveCharacter('up');
+              this.buttonPressed = 'up'; // 记录按下的按钮
+            })
             .stateStyles({
               pressed: {
                 opacity: 0.5 // 按下时降低透明度
@@ -1038,6 +1144,21 @@ default:
               }
             })
 
+            // 背包按键
+            Button(){
+              Image($r('app.media.backpack'))
+                .width(75)
+                .height(75)
+            }
+            .onClick((event: ClickEvent) => { // 修改 onClick 事件
+              this.showInventoryDialog();
+              this.renderTrigger ++ ;
+
+            })
+            .width(75) // 设置按钮宽度
+            .height(75) // 设置按钮高度
+            .margin({ left: 70 }) // 添加左边距
+
 
           }
           .width('100%')
@@ -1048,7 +1169,7 @@ default:
 
         }
         .width('100%')
-
+        .zIndex(30)
       }
       .width('100%')
       .height('100%')
