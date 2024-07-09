@@ -1,8 +1,19 @@
+import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 import { BusinessError } from '@ohos.base';
 import { Animator } from '@kit.ArkUI';
 import animator, { AnimatorResult } from '@ohos.animator';
+import { updateCharacterData, playerData, PlayerData } from '../../global/globalState';
 
+
+interface NpcRewardItemData {
+  name: string;
+  description: string;
+  type: 'consumable' | 'equipment' | 'keyItem';
+  effect: () => void; // 使用 CharacterData 类型
+  icon: string;
+  quantity: number;
+}
 
 interface Position {
   x: number;
@@ -43,6 +54,21 @@ collisionRadius: number; // 角色碰撞半径
   nextLevelExp: number; //升级所需的经验值
   inventory: ItemData[]; // 角色的背包
   live: boolean;
+  monstersKilled?: number; // 击杀怪物数量
+  goldCollected?: number; // 收集金币数量
+  quests?: QuestData[]; // NPC 提供的任务列表（可选）
+}
+
+
+
+interface QuestData {
+  name: string; // 任务名称
+  description: string; // 任务描述
+  type: 'travel' | 'collection'; // 任务类型
+  targetLocation?: Position; // 如果是旅行任务，则为目标位置
+  targetItems?: string[]; // 如果是收集任务，则为目标物品列表
+  reward: NpcRewardItemData[]; // 使用 NpcRewardItemData 类型
+  isCompleted: boolean; // 任务是否已完成
 }
 
 interface ItemData {
@@ -50,10 +76,22 @@ interface ItemData {
   description: string; // 道具描述
   type: 'consumable' | 'equipment' | 'keyItem'; // 道具类型
   effect: (character: CharacterData) => void; // 道具效果函数
+  icon: string;
+  quantity: number;
 }
+
+const goldCoin: ItemData ={
+  name: '金币',
+  description: '货币',
+  type: 'keyItem',
+  effect: () => {}, // 金币本身没有直接效果，但可以在其他地方使用
+  icon: 'app.media.gold_coin',
+  quantity: 0 // 初始数量为 0
+};
 
 @Component
 export struct GameArea {
+
 
   @State isFlipped: boolean = false;
   @State renderTrigger: number = 0;
@@ -74,8 +112,8 @@ export struct GameArea {
   @State actionStart: boolean = false; // 事件开始标识
   @State actionEnd: boolean = true; // 事件结束标识
 
-  @State gameAreaWidth: number = 450; // 设置游戏区域的宽度
-  @State gameAreaHeight: number = 600; // 设置游戏区域的高度
+  @State gameAreaWidth: number = 600; // 设置游戏区域的宽度
+  @State gameAreaHeight: number = 900; // 设置游戏区域的高度
 
   @State joystickX: number = 0; // joystick 的 x 坐标（不受限制）
   @State joystickY: number = 0; // joystick 的 y 坐标（不受限制）
@@ -93,6 +131,9 @@ export struct GameArea {
   @State dialogTitle: string = '';
   @State npcDialogMessage: string = '';
   @State showMoveDialog: boolean = false;
+
+
+
   // 显示弹窗的函数
   showDialog() {
     if (this.dialogMessage !== '') {
@@ -121,7 +162,17 @@ export struct GameArea {
     }; // 初始化 updateState 变量
   }
 
-  onInit() {
+  onPageShow() {
+
+    // 数据同步
+    updateCharacterData({
+      exp: this.characters[0].exp,
+      inventory: this.characters[0].inventory,
+
+
+    });
+
+
     // 在组件加载时生成敌人和宝箱
     this.generateRandomEntities();
 
@@ -131,9 +182,7 @@ export struct GameArea {
 
   }
   aboutToDisappear() {// 在组件销毁时停止动画，避免内存泄漏
-    if (this.joystickAnimator) {
-      this.joystickAnimator = undefined;
-    }
+
   }
 
 
@@ -143,7 +192,7 @@ export struct GameArea {
     // ... 角色数据 ...
     position: { x: 180, y: 100 } ,
     name: '',
-    level: 0,
+    level: 2,
     class: '',
     hp: 50,
     maxHp: 100,
@@ -152,15 +201,119 @@ export struct GameArea {
     strength: 80,
     dexterity: 5,
     intelligence: 3,
-    avatar: '',
+    avatar: 'app.media.knight',
     direction: null,
     collisionRadius: 25,
       type: 'player',
       exp: 30,
       nextLevelExp: 100,
       inventory: [],
-      live: true
-  },];
+      live: true,
+      monstersKilled: 0,
+      goldCollected: 0,
+  },
+    {
+      type: 'npc',
+      name: '老村长',
+      level: 1,
+      class: '村长',
+      hp: 100,
+      maxHp: 100,
+      mp:0,
+      maxMp: 0,
+      strength: 10,
+      dexterity: 10,
+      intelligence: 10,
+      avatar: 'app.media.village_elder',
+      position: { x: 0, y: 0 },
+      direction: null,
+      collisionRadius: 25,
+      exp: 0,
+      nextLevelExp: 100,
+      inventory: [],
+      live: true,
+      monstersKilled: 0,
+      goldCollected: 0,
+      quests: [
+        {
+          name: '寻找草药',
+          description: '去森林里帮我收集 5 株草药。',
+          type: 'collection',
+          targetItems: ['草药'],
+          reward: [
+            {
+              name: '治疗药水',
+              description: '恢复 50 点生命值',
+              type: 'consumable',
+              effect: (character: CharacterData) => { character.hp += 50; },
+              icon: 'app.media.healing_potion',
+              quantity: 1
+            } as NpcRewardItemData // 使用类型断言
+            ],
+          isCompleted: false
+        },
+        {
+          name: '送信',
+          description: '请将这封信送到邻村的铁匠那里。',
+          type: 'travel',
+          targetLocation: { x: 100, y: 200 },
+          reward: [
+            {
+              name: '金币',
+              description: '货币',
+              type: 'keyItem',
+              effect: () => {},
+              icon: 'app.media.gold_coin',
+              quantity: 100 // 奖励 100 个金币
+            } as NpcRewardItemData // 使用类型断言
+          ], // 稍后添加金币
+          isCompleted: false
+        }
+      ]
+    },
+  ];
+
+  // 任务系统
+  acceptQuest(npcIndex: number, questIndex: number) {
+    const npc = this.characters[npcIndex];
+    if (npc.quests) {
+      const quest = npc.quests[questIndex];
+      if (!quest.isCompleted) {
+        // 创建一个新的 ItemData 数组
+        const newReward: ItemData[] = [];
+
+        //遍历 convertedReward，将每个 NpcRewardItemData 转换为 ItemData
+        quest.reward.forEach(item => {
+          newReward.push({
+            name: item.name,
+            description: item.description,
+            type: item.type,
+            // 创建一个新的 effect 函数
+            effect: () => {
+              // 这里暂时不处理具体效果
+            },
+            icon: item.icon,
+            quantity: item.quantity
+          });
+        });
+
+        // 创建一个新的 QuestData 对象，使用新的 reward 数组
+        const newQuest: QuestData = {
+          name: quest.name,
+          description: quest.description,
+          type: quest.type,
+          targetLocation: quest.targetLocation,
+          targetItems: quest.targetItems,
+          reward: newReward as NpcRewardItemData[],
+          isCompleted: quest.isCompleted
+        };
+
+        // 将新的 QuestData 对象添加到玩家的任务列表中
+        playerData.activeQuests.push(newQuest);// 更新角色数据
+        updateCharacterData({ activeQuests: playerData.activeQuests });
+      }
+    }
+  }
 
   @State isMoving: boolean = false; // 是否正在移动
   // 角色移动
@@ -337,6 +490,8 @@ export struct GameArea {
           nextLevelExp: 100, // 升级所需经验值
           inventory: [], // 初始空背包
           live: true,
+          monstersKilled: 0,
+          goldCollected: 0,
         };
 
         // 检查新生成的敌人是否与现有角色或正在生成的敌人和宝箱重叠
@@ -381,6 +536,8 @@ export struct GameArea {
           nextLevelExp: 100, // 升级所需经验值
           inventory: [], // 初始空背包
           live: true,
+          monstersKilled: 0,
+          goldCollected: 0,
         };
 
         //检查新生成的宝箱是否与现有角色或正在生成的敌人和宝箱重叠
@@ -651,6 +808,13 @@ export struct GameArea {
       this.enemyAndTreasureNames.delete(index);
     }
 
+    // 数据同步
+    updateCharacterData({
+      exp: this.characters[0].exp,
+      inventory: this.characters[0].inventory
+    });
+
+
     // 检查是否升级
     this.checkLevelUp();
 
@@ -672,6 +836,7 @@ export struct GameArea {
     //this.updateState(); // 触发重新渲染
   }
 
+
   // 获取随机道具
   getRandomItem(): ItemData {
     // 这里可以实现更复杂的道具掉落逻辑
@@ -682,7 +847,9 @@ export struct GameArea {
         type: 'consumable',
         effect: (character: CharacterData) => {
           character.hp = Math.min(character.hp + 50, character.maxHp);
-        }
+        },
+        icon: 'app.media.potion_red',
+        quantity: 1,
       },
     // 添加更多道具...
     ];
@@ -759,7 +926,9 @@ export struct GameArea {
           type: 'equipment',
           effect: (character: CharacterData) => {
             // 实现武器的效果
-          }
+          },
+          icon: 'app.media.refine',
+          quantity: 1,
         });
         this.battleReportAbovePlayer = `💎发现了宝箱！💎\n你获得了 ${reward.name}！`;
         break;
@@ -771,15 +940,25 @@ export struct GameArea {
           type: 'keyItem',
           effect: (character: CharacterData) => {
             // 实现任务道具的效果
-          }
+          },
+          icon: 'app.media.refine',
+          quantity: 1,
+        });
+        updateCharacterData({
+          inventory: this.characters[0].inventory
         });
         this.battleReportAbovePlayer = `💎发现了宝箱！💎\n你获得了 ${reward.name}！`;
         break;
     }
 
+
+
     this.showDialog();
     this.actionStart = false;
     this.actionEnd = true;
+
+    // 手动触发重新渲染
+    this.renderTrigger++;
 
     this.updateState(); // 触发重新渲染
   }
